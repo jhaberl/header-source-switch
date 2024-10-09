@@ -38,6 +38,17 @@ export function activate(context: vscode.ExtensionContext) {
     fsWatcher.onDidCreate((uri:vscode.Uri) => updateCache(uri, true));
     fsWatcher.onDidDelete((uri: vscode.Uri) => updateCache(uri, false));
     context.subscriptions.push(fsWatcher);
+
+    let onConfigChange = () => {
+        let cfg = vscode.workspace.getConfiguration('headerSourceSwitch');
+        if (cfg.get<boolean>('always') && !changeTracker.isTracking()) {
+            toggleTracking();
+        }
+    };
+    onConfigChange.call(this);
+
+    let configurationChangeDisposable = vscode.workspace.onDidChangeConfiguration(onConfigChange);
+    context.subscriptions.push(configurationChangeDisposable);
 }
 
 // this method is called when your extension is deactivated
