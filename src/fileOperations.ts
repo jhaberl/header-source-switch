@@ -2,11 +2,91 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import fileExists = require('file-exists');
+import { Mutex, MutexInterface } from 'async-mutex';
 
 interface FileMapping {
     header: string[]
     source: string[]
     name: string
+}
+
+const cacheMutex = new Mutex();
+var fileCache: { [id: string]: string[] } = {};
+
+export async function initCache() {
+    cacheMutex.runExclusive(async () => {
+        fileCache = {};
+
+        let cfg = vscode.workspace.getConfiguration('headerSourceSwitch');
+        let mappings = cfg.get<FileMapping[]>('mappings');
+
+        let uris: vscode.Uri[] = await vscode.workspace.findFiles('**/*');
+        for (const uri of uris) {
+            let fsPath = path.normalize(uri.fsPath);
+            let extension = path.extname(fsPath);
+
+            for (let i = 0; i < mappings.length; i++) {
+                let mapping = mappings[i];
+
+                if (mapping.header.indexOf(extension) != -1 || mapping.source.indexOf(extension) != -1) {
+                    // Extension present in a mapping, add to cache
+                    let name = path.basename(fsPath).replace(extension, '');
+                    if (name in fileCache) {
+                        fileCache[name].push(fsPath);
+                    } else {
+                        fileCache[name] = [fsPath];
+                    }
+                    break;
+                }
+            }
+        }
+    }, 2);
+}
+
+export async function updateCache(uri:vscode.Uri, create:boolean) {
+    cacheMutex.runExclusive(async () => {
+        let cfg = vscode.workspace.getConfiguration('headerSourceSwitch');
+        let mappings = cfg.get<FileMapping[]>('mappings');
+
+        let fsPath = path.normalize(uri.fsPath);
+        let extension = path.extname(fsPath);
+
+        if (create) {
+            for (let i = 0; i < mappings.length; i++) {
+                let mapping = mappings[i];
+
+                if (mapping.header.indexOf(extension) != -1 || mapping.source.indexOf(extension) != -1) {
+                    // Extension present in a mapping, add to cache
+                    let name = path.basename(fsPath).replace(extension, '');
+                    if (name in fileCache) {
+                        fileCache[name].push(fsPath);
+                    } else {
+                        fileCache[name] = [fsPath];
+                    }
+                    break;
+                }
+            }
+        } else {
+            let name = path.basename(fsPath).replace(extension, '');
+            if (name in fileCache) {
+                let index = fileCache[name].indexOf(fsPath);
+                if (index > -1) {
+                    fileCache[name].splice(index, 1);
+                    if (fileCache[name].length === 0) delete fileCache[name];
+                }
+            }
+        }
+    }, 1);
+}
+
+function queryCache(file:string): Thenable<string[]> {
+    return cacheMutex.runExclusive(async () => {
+        let extension = path.extname(file);
+        let name = path.basename(file).replace(extension, '');
+        
+        if (name in fileCache) return fileCache[name];
+        return [];
+    });
 }
 
 export function findMatchedFileAsync(currentFileName:string) : Thenable<string> {
@@ -49,92 +129,32 @@ export function findMatchedFileAsync(currentFileName:string) : Thenable<string> 
     }
 
     let extRegex = "(\\" + extensions.join("|\\") + ")$";
-    let newFileName = fileWithoutExtension;
-    let found : boolean = false;
 
-    // Search the current directory for a matching file
-    let filesInDir: string[] = fs.readdirSync(dir).filter((value: string, index: number, array: string[]) =>
-    {
-        return (path.extname(value).match(extRegex) != undefined);
-    });
+    return new Promise<string>((resolve, reject) => {
+        queryCache(currentFileName).then(paths => {
+            let currentIndex = paths.indexOf(currentFileName);
+            if (currentIndex > -1) paths.splice(currentIndex, 1);
 
-    for (var i = 0; i < filesInDir.length; i++)
-    {
-        let fileName: string = filesInDir[i];
-        let match = fileName.match(fileWithoutExtension + extRegex);
-        if (match)
-        {
-            found = true;
-            newFileName = match[0];
-            break;
-        }
-    }
-
-    if (found)
-    {
-        let newFile = path.join(dir, newFileName);
-        return new Promise<string>((resolve, reject) => {
-            resolve(newFile);
-        });
-    }
-    else
-    {
-        return new Promise<string>((resolve, reject) =>
-        {
-            let promises = new Array<Promise<vscode.Uri[]>>();
-            extensions.forEach(ext => {
-                promises.push(new Promise<vscode.Uri[]>(
-                    (resolve, reject) =>
-                    {
-                        vscode.workspace.findFiles('**/'+fileWithoutExtension+ext).then(
-                            (uris) =>
-                            {
-                                resolve(uris);
-                            }
-                        );
-                    }));
+            paths = paths.filter((value: string) => {
+                return path.extname(value).match(extRegex) != undefined;
             });
 
-            Promise.all(promises).then(
-                (values:any[]) => {
-                    let resolved = false;
+            // Try to order the filepaths based on closeness to original file
+            paths.sort((a: string, b: string) => {
+                let aRelative = path.relative(currentFileName, a);
+                let bRelative = path.relative(currentFileName, b);
 
-                    if (values.length == 0) {
-                        resolve(null);
-                        return;
-                    }
+                let aDistance = aRelative.split(path.sep).length;
+                let bDistance = bRelative.split(path.sep).length;
 
-                    values = values.filter((value: any) => {
-                        return value && value.length > 0;
-                    });
+                return aDistance - bDistance;
+            });
 
-                    // flatten the values to a single array
-                    let filePaths = [].concat.apply([], values);
-                    filePaths = filePaths.map((uri: vscode.Uri, index: number) => {
-                        return path.normalize(uri.fsPath);
-                    });
-
-                    // Try to order the filepaths based on closeness to original file
-                    filePaths.sort((a: string, b: string) => {
-                        let aRelative = path.relative(currentFileName, a);
-                        let bRelative = path.relative(currentFileName, b);
-
-                        let aDistance = aRelative.split(path.sep).length;
-                        let bDistance = bRelative.split(path.sep).length;
-
-                        return aDistance - bDistance;
-                    });
-
-                    if (filePaths && filePaths.length > 0)
-                    {
-                        resolve(filePaths[0]);
-                    }
-                    else 
-                    {
-                        reject('no paths matching');
-                    }
-                }
-            );
+            if (paths.length > 0) {
+                resolve(paths[0]);
+            } else {
+                reject('no paths matching');
+            }
         });
-    }
+    });
 }
