@@ -51,7 +51,7 @@ class DocumentTracker extends vscode.Disposable
 
     private async _onEditorChange()
     {
-        if (vscode.window.activeTextEditor.viewColumn == this._mainColumn)
+        if (vscode.window.activeTextEditor?.viewColumn == this._mainColumn)
         {
             let fileToOpen = await findMatchToCurrent();
             if (fileToOpen)

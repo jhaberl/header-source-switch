@@ -40,6 +40,7 @@ export async function initCache() {
                 }
             }
         }
+        console.log("File cache initialized");
     }, 2);
 }
 
@@ -76,6 +77,7 @@ export async function updateCache(uri:vscode.Uri, create:boolean) {
                 }
             }
         }
+        console.log("File cache updated: ", uri);
     }, 1);
 }
 
@@ -132,15 +134,17 @@ export function findMatchedFileAsync(currentFileName:string) : Thenable<string> 
 
     return new Promise<string>((resolve, reject) => {
         queryCache(currentFileName).then(paths => {
-            let currentIndex = paths.indexOf(currentFileName);
-            if (currentIndex > -1) paths.splice(currentIndex, 1);
+            let filePaths = [...paths]
 
-            paths = paths.filter((value: string) => {
+            let currentIndex = filePaths.indexOf(currentFileName);
+            if (currentIndex > -1) filePaths.splice(currentIndex, 1);
+
+            filePaths = filePaths.filter((value: string) => {
                 return path.extname(value).match(extRegex) != undefined;
             });
 
             // Try to order the filepaths based on closeness to original file
-            paths.sort((a: string, b: string) => {
+            filePaths.sort((a: string, b: string) => {
                 let aRelative = path.relative(currentFileName, a);
                 let bRelative = path.relative(currentFileName, b);
 
@@ -150,10 +154,10 @@ export function findMatchedFileAsync(currentFileName:string) : Thenable<string> 
                 return aDistance - bDistance;
             });
 
-            if (paths.length > 0) {
-                resolve(paths[0]);
+            if (filePaths.length > 0) {
+                resolve(filePaths[0]);
             } else {
-                reject('no paths matching');
+                reject('no paths matching for ' + currentFileName);
             }
         });
     });
