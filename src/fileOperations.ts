@@ -101,8 +101,6 @@ export function findMatchedFileAsync(currentFileName:string) : Thenable<string> 
         return;
     }
 
-    let fileWithoutExtension = path.basename(currentFileName).replace(extension, '');
-
     // Determine if the file is a header or source file.
     let extensions : string[] = null;
 
