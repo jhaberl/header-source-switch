@@ -21,7 +21,11 @@ class DocumentTracker extends vscode.Disposable
             return;
         }
 
-        this._mainColumn = vscode.window.activeTextEditor.viewColumn;
+        if (vscode.window.activeTextEditor) {
+            this._mainColumn = vscode.window.activeTextEditor.viewColumn;
+        } else {
+            this._mainColumn = vscode.ViewColumn.One; // Default to the left view column
+        }
 
         let subscriptions: vscode.Disposable[] = [];
         vscode.window.onDidChangeActiveTextEditor(this._onEditorChange, this, subscriptions);
